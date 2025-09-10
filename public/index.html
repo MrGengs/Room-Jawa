@@ -4,14 +4,85 @@
     <meta charset="utf-8" />
     <title>Realistic avatars — Networked-Aframe</title>
     <meta name="description" content="Realistic avatars — Networked-Aframe" />
-
+    
+    <!-- Load A-Frame first -->
     <script src="https://aframe.io/releases/1.7.0/aframe.min.js"></script>
-
+    <!-- Add physics and movement components -->
+    <script src="https://cdn.jsdelivr.net/npm/aframe-physics-system@4.0.1/dist/aframe-physics-system.min.js"></script>
+    <script src="https://unpkg.com/aframe-extras@6.1.1/dist/aframe-extras.loaders.min.js"></script>
+    <script src="https://unpkg.com/aframe-wasd-controls@1.2.0/dist/aframe-wasd-controls.min.js"></script>
+    <script>
+      // Enable physics debug if needed
+      AFRAME.registerComponent('player-movement', {
+        init: function() {
+          this.velocity = new THREE.Vector3();
+          this.direction = new THREE.Vector3();
+          this.moveSpeed = 5;
+          
+          // Add keyboard event listeners
+          this.keys = {};
+          document.addEventListener('keydown', (e) => {
+            this.keys[e.key.toLowerCase()] = true;
+          });
+          document.addEventListener('keyup', (e) => {
+            this.keys[e.key.toLowerCase()] = false;
+          });
+        },
+        
+        tick: function(time, delta) {
+          if (!this.el.sceneEl.is('vr-mode')) {
+            const camera = this.el.querySelector('[camera]');
+            const moveSpeed = this.moveSpeed * (delta / 1000);
+            
+            // Reset direction
+            this.direction.set(0, 0, 0);
+            
+            // Forward/backward movement (W/S)
+            if (this.keys['w'] || this.keys['arrowup']) this.direction.z -= 1;
+            if (this.keys['s'] || this.keys['arrowdown']) this.direction.z += 1;
+            
+            // Strafe left/right (A/D)
+            if (this.keys['a'] || this.keys['arrowleft']) this.direction.x -= 1;
+            if (this.keys['d'] || this.keys['arrowright']) this.direction.x += 1;
+            
+            // Normalize direction and apply speed
+            if (this.direction.lengthSq() > 0) {
+              this.direction.normalize();
+              
+              // Get camera's horizontal rotation
+              const yaw = camera.object3D.rotation.y;
+              const x = this.direction.x * Math.cos(yaw) - this.direction.z * Math.sin(yaw);
+              const z = this.direction.x * Math.sin(yaw) + this.direction.z * Math.cos(yaw);
+              
+              // Update position
+              const position = this.el.getAttribute('position');
+              this.el.setAttribute('position', {
+                x: position.x + x * moveSpeed,
+                y: position.y,
+                z: position.z + z * moveSpeed
+              });
+              
+              // Trigger walking animation if available
+              const playerInfo = this.el.components['player-info'];
+              if (playerInfo && (!playerInfo.animationState || playerInfo.animationState !== 'Walking')) {
+                playerInfo.setAnimation({ name: 'Walking' });
+                playerInfo.animationState = 'Walking';
+              }
+            } else if (this.el.components['player-info']?.animationState === 'Walking') {
+              // Return to idle when not moving
+              this.el.components['player-info'].setAnimation({ name: 'Idle' });
+              this.el.components['player-info'].animationState = 'Idle';
+            }
+          }
+        }
+      });
+    </script>
+    <!-- Load FBX Loader -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/FBXLoader.js"></script>
+    <!-- Load Networked-AFrame dependencies -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.8.1/socket.io.min.js"></script>
     <script src="/easyrtc/easyrtc.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/networked-aframe@0.14.0/dist/networked-aframe.min.js"></script>
-
-    <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.5.4/dist/aframe-extras.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/aframe-environment-component@1.5.0/dist/aframe-environment-component.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@fern-solutions/aframe-mirror@1.1.1/dist/mirror.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-cursor-teleport@1.6.0/dist/aframe-cursor-teleport-component.min.js"></script>
@@ -39,57 +110,168 @@
     -->
     <a-scene
       light="defaultLightsEnabled:false"
-      renderer="stencil:true"
+      renderer="colorManagement: true; physicallyCorrectLights: true;"
       networked-scene="
         connectOnLoad: false;
-        room: forest;
-        debug: true;
+        room: joglo-house;
+        debug: false;
         adapter: wseasyrtc;
         audio: false;
-        video: false;
-    "
-      shadow="type: pcfsoft"
+        video: false;"
+      shadow="type: pcfsoft;"
       gltf-model="meshoptDecoderPath:https://unpkg.com/meshoptimizer@0.19.0/meshopt_decoder.js"
-      raycaster="far: 100; objects: .clickable,[link];"
+      raycaster="far: 1000; objects: .clickable,[link];"
       cursor="rayOrigin: mouse"
+      physics="debug: false;"
+      stats
     >
       <a-assets>
+        <a-asset-item id="world-model" src="assets/world.glb"></a-asset-item>
         <a-asset-item id="house-model" src="assets/rumah.glb"></a-asset-item>
         <template id="avatar-template">
-          <a-entity player-info>
-            <a-entity class="model">
-              <!-- here we add a text component for a nametag; the value will be updated by the player-info component -->
-              <a-text class="nametag" align="center" value="?" position="0 2.1 0" scale=".5 .5 .5"></a-text>
+          <a-entity id="player" player-info position="0 0 5">
+            <!-- Player Model -->
+            <a-entity class="model" position="0 0 0">
+              <a-text class="nametag" align="center" value="Player" position="0 1.8 0" scale="0.5 0.5 0.5" color="white" width="3"></a-text>
+              <!-- Human-sized representation -->
+              <a-entity position="0 0 0">
+                <!-- Head -->
+                <a-sphere 
+                  position="0 1.7 0" 
+                  radius="0.2" 
+                  color="#FFD700"
+                  shadow>
+                </a-sphere>
+                <!-- Body -->
+                <a-cylinder 
+                  position="0 1.0 0" 
+                  radius="0.2" 
+                  height="1.0" 
+                  color="#4CC3D9"
+                  shadow>
+                </a-cylinder>
+                <!-- Legs -->
+                <a-box 
+                  position="-0.1 0.3 0" 
+                  width="0.15" 
+                  height="0.7" 
+                  depth="0.15" 
+                  color="#4CC3D9"
+                  shadow>
+                </a-box>
+                <a-box 
+                  position="0.1 0.3 0" 
+                  width="0.15" 
+                  height="0.7" 
+                  depth="0.15" 
+                  color="#4CC3D9"
+                  shadow>
+                </a-box>
+              </a-entity>
             </a-entity>
-            <a-entity class="camera" position="0 1.6 0"></a-entity>
-            <!-- <a-entity class="camera" position="0 1.6 0" networked-audio-source></a-entity> -->
+            
+            <!-- Camera and Controls -->
+            <a-entity 
+              class="camera" 
+              position="0 1.6 0" 
+              wasd-controls="acceleration: 20; fly: false; enabled: true"
+              look-controls="pointerLockEnabled: true"
+              position="0 1.6 0">
+              
+              <a-entity 
+                cursor="rayOrigin: mouse" 
+                raycaster="objects: .clickable" 
+                position="0 0 -1">
+              </a-entity>
+            </a-entity>
+            
+            <!-- Player Collider -->
+            <a-entity
+              geometry="primitive: capsule; radius: 0.3; height: 1.6"
+              position="0 0.8 0"
+              visible="false"
+              static-body
+              shape="auto">
+            </a-entity>
           </a-entity>
         </template>
-        <img id="thumbJapan" crossorigin="anonymous" src="https://cdn.aframe.io/link-traversal/thumbs/japan.png" />
         <img id="thumbForest" crossorigin="anonymous" src="https://cdn.aframe.io/link-traversal/thumbs/forest.png" />
       </a-assets>
 
       <a-entity id="scene">
-        <!-- House with collision -->
-        <a-entity gltf-model="#house-model" position="10 0 -5" scale="3 3 3" shadow>
-          <!-- Collision boxes for the house, scaled up to match the house size -->
-          <a-box position="0 3 0" width="12" height="6" depth="12" visible="false" static-body="shape: box; mass: 0"></a-box>
-          <a-cone position="0 9 0" radius-bottom="7.5" radius-top="0" height="6" visible="false" static-body="shape: box; mass: 0"></a-cone>
+        <!-- World Model - Scaled up -->
+        <a-entity 
+          id="world"
+          gltf-model="#world-model"
+          position="0 0 0"
+          scale="5 5 5"
+          shadow="receive: true; cast: true">
         </a-entity>
         
-        <a-entity environment="preset:forest;shadow:true"></a-entity>
+        <!-- Lighting -->
+        <a-light type="directional" 
+                color="#ffffff" 
+                intensity="1.2" 
+                position="-1 3 1" 
+                castShadow="true"
+                shadow-map-size="4096"
+                shadow-camera-left="-50"
+                shadow-camera-right="50"
+                shadow-camera-top="50"
+                shadow-camera-bottom="-50">
+        </a-light>
+        
+        <a-light type="ambient" color="#b3b3b3" intensity="0.4"></a-light>
+        <a-light type="hemisphere" color="#e6f0ff" groundColor="#4d4d4d" intensity="0.6"></a-light>
+        
+        <!-- Main Joglo House - Real Life Size -->
+        <a-entity id="joglo-house" position="0 0.3 0">
+          <!-- House Model at full scale -->
+          <a-entity 
+            gltf-model="assets/rumah_joglo.glb" 
+            position="0 0 0" 
+            scale="3 3 3"
+            rotation="0 180 0"
+            shadow="receive: true; cast: true">
+          </a-entity>
+          
+          <!-- Ground Collider - Even larger for the expanded world -->
+          <a-plane 
+            static-body 
+            position="0 0 0" 
+            rotation="-90 0 0" 
+            width="500" 
+            height="500" 
+            visible="false"
+            shadow="receive: true">
+          </a-plane>
+          
+          <!-- Boundary Colliders - Scaled up for larger world -->
+          <a-box static-body position="0 25 -125" width="250" height="25" depth="1" visible="false"></a-box>
+          <a-box static-body position="0 25 125" width="250" height="25" depth="1" visible="false"></a-box>
+          <a-box static-body position="-125 25 0" width="1" height="25" depth="250" visible="false"></a-box>
+          <a-box static-body position="125 25 0" width="1" height="25" depth="250" visible="false"></a-box>
+          
+          <!-- House Floor Collider - Scaled up -->
+          <a-box 
+            static-body 
+            position="0 0.05 0" 
+            width="40" 
+            height="0.1" 
+            depth="40" 
+            visible="false"
+            material="color: #8B8B83; roughness: 0.8; metalness: 0.2">
+          </a-box>
+        </a-entity>
+        
+        <!-- Player start position - moved further back to see the larger house -->
+        <a-entity id="player-start" position="0 1.6 20"></a-entity>
+        
+        <!-- Ambient light and environment -->
         <a-entity light="type:ambient;intensity:0.5"></a-entity>
         <a-mirror id="mirror" position="0 1.8 -3" scale="5 3 1" layers="0,3">
           <a-box color="black" position="0 0 -0.02" scale="1.02 1.02 0.01"></a-box>
         </a-mirror>
-        <a-link
-          change-room="on:obbcollisionstarted;room:japan;url:japan.html"
-          link="on:ignore"
-          href="japan"
-          position="-2 1.5 3"
-          image="#thumbJapan"
-          ><a-box position="0 0 0.5" obb-collider visible="false"></a-box
-        ></a-link>
         <a-cylinder radius="0.25" height="0.4" position="1.5 0.2 -2" rotation="0 180 0">
           <a-waypoint
             id="seat1"
@@ -112,15 +294,21 @@
 
       <a-entity
         id="rig"
-        cursor-teleport="cameraRig: #rig; cameraHead: #player; collisionEntities: .environmentGround; ignoreEntities: .clickable,[link]"
-        simple-navmesh-constraint="navmesh:.environmentGround,.environmentDressing;fall:10;height:0;exclude:.navmesh-hole;"
-        movement-controls="fly:false;controls: gamepad, trackpad, keyboard, nipple;"
+        cursor-teleport="cameraRig: #rig; cameraHead: #player; collisionEntities: .environmentGround, [static-body]; ignoreEntities: .clickable,[link]"
+        simple-navmesh-constraint="navmesh:.environmentGround;fall:10;"
+        movement-controls="controls: gamepad, trackpad, keyboard, nipple;"
         spawn-in-circle="radius:1"
         networked="template:#avatar-template;attachTemplateToLocal:false"
         player-info
       >
         <a-entity id="player" class="camera" camera position="0 1.6 0" look-controls>
-          <a-box obb-collider visible="false" height="0.4" depth="0.4" width="0.4"></a-box>
+          <!-- Simple player collision -->
+          <a-entity position="0 0.9 0"
+                   geometry="primitive: box; width: 0.6; height: 1.8; depth: 0.6"
+                   material="visible: false"
+                   static-body="shape: none;"
+                   collision-filter="group: player">
+          </a-entity>
         </a-entity>
         <a-entity
           id="left-hand"
